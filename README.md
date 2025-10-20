@@ -41,38 +41,108 @@ O bot está disponível publicamente no Telegram! Não é necessário instalar n
 
 ## ☁️ Deploy
 
-O bot está hospedado no [Railway](https://railway.com/), uma plataforma de deploy que simplifica a infraestrutura e permite escalabilidade automática.
+O bot está hospedado no [Fly.io](https://fly.io/), uma plataforma de deploy global que oferece um plano gratuito generoso e execução de containers Docker.
 
-### Por que Railway?
+### Por que Fly.io?
 
-- ✅ Deploy automático a partir do GitHub
-- ✅ Escalabilidade automática
-- ✅ Gerenciamento simples de variáveis de ambiente
+- ✅ Plano gratuito com 3 VMs compartilhadas
+- ✅ Deploy via Docker
+- ✅ Gerenciamento seguro de secrets
 - ✅ Logs e monitoramento em tempo real
-- ✅ Suporte nativo para Java/Maven
+- ✅ Regiões globais (incluindo São Paulo - GRU)
+- ✅ CLI poderosa e fácil de usar
 - ✅ Uptime 24/7
 
-### Configuração no Railway
+### 🔧 Como fazer o deploy no Fly.io
 
-O bot utiliza as seguintes variáveis de ambiente:
+#### 1. Pré-requisitos
 
-- `BOT_TOKEN`: Token fornecido pelo [@BotFather](https://t.me/botfather)
-- `BOT_USERNAME`: Username do bot no Telegram
+- Conta no [Fly.io](https://fly.io/) (gratuita)
+- [Fly CLI](https://fly.io/docs/hands-on/install-flyctl/) instalada
+- Token do bot do Telegram (via [@BotFather](https://t.me/botfather))
 
-O Railway detecta automaticamente o `pom.xml` e compila o projeto usando Maven, executando a classe principal automaticamente.
+#### 2. Instalar o Fly CLI
 
-### 🔧 Faça seu próprio deploy (Opcional)
+```bash
+# macOS/Linux
+curl -L https://fly.io/install.sh | sh
 
-Se você quiser fazer seu próprio deploy do bot:
+# Windows (PowerShell)
+iwr https://fly.io/install.ps1 -useb | iex
+```
 
-1. Faça um fork deste repositório
-2. Crie uma conta no [Railway](https://railway.com/)
-3. Crie um novo projeto no Railway
-4. Conecte seu repositório do GitHub
-5. Configure as variáveis de ambiente `BOT_TOKEN` e `BOT_USERNAME`
-6. O Railway fará o deploy automaticamente!
+#### 3. Fazer login no Fly.io
 
-O Railway oferece um plano gratuito generoso para começar, perfeito para projetos pequenos e médios.
+```bash
+fly auth login
+```
+
+#### 4. Lançar a aplicação
+
+Na pasta do projeto, execute:
+
+```bash
+fly launch
+```
+
+O Fly.io irá:
+- Detectar o `Dockerfile`
+- Sugerir um nome para a app (ou você pode escolher)
+- Selecionar a região (recomendado: `gru` - São Paulo)
+
+Quando perguntar **"Would you like to deploy now?"**, responda **não** (vamos configurar os secrets primeiro).
+
+#### 5. Configurar os secrets (variáveis de ambiente)
+
+```bash
+fly secrets set BOT_TOKEN="seu_token_aqui"
+fly secrets set BOT_USERNAME="seu_username_aqui"
+```
+
+#### 6. Fazer o deploy
+
+```bash
+fly deploy
+```
+
+#### 7. Verificar o status
+
+```bash
+fly status
+fly logs
+```
+
+### 📋 Comandos úteis do Fly.io
+
+```bash
+# Ver logs em tempo real
+fly logs
+
+# Ver status da aplicação
+fly status
+
+# Abrir dashboard da app
+fly dashboard
+
+# Atualizar após mudanças no código
+fly deploy
+
+# Reiniciar a aplicação
+fly apps restart
+
+# Ver secrets configurados (não mostra os valores)
+fly secrets list
+```
+
+### 💰 Sobre o plano gratuito
+
+O Fly.io oferece gratuitamente:
+- **3 VMs compartilhadas** (shared-cpu-1x)
+- **256MB de RAM** por VM
+- **3GB de storage persistente**
+- **160GB de tráfego outbound/mês**
+
+Isso é mais do que suficiente para rodar um bot do Telegram 24/7!
 
 ## 📱 Como Usar o Bot
 
@@ -107,6 +177,10 @@ ChatBotQuitutesGranja/
 │                   └── Main.java          # Classe principal do bot
 ├── menu-quitutes.pdf                      # Catálogo da loja
 ├── pom.xml                                # Configuração do Maven
+├── Dockerfile                             # Configuração do Docker
+├── .dockerignore                          # Arquivos ignorados no build
+├── fly.toml                               # Configuração do Fly.io
+├── LICENSE                                # Licença MIT
 └── README.md                              # Este arquivo
 ```
 
@@ -149,7 +223,7 @@ Desenvolvido com ❤️ para a Quitutes da Granja
 
 ---
 
-**Nota**: O bot está atualmente em produção no Railway. Para melhorias futuras, considere adicionar:
+**Nota**: O bot está atualmente em produção no Fly.io. Para melhorias futuras, considere adicionar:
 - Banco de dados para persistência de pedidos
 - Sistema de autenticação e autorização para administradores
 - Painel administrativo para gerenciar pedidos

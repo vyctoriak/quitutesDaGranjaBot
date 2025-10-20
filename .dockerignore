@@ -1,0 +1,10 @@
+target/
+.idea/
+.git/
+.env
+*.iml
+*.class
+.DS_Store
+README.md
+LICENSE
+
