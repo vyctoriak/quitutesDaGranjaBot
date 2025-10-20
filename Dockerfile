@@ -14,8 +14,8 @@ RUN mvn clean package -DskipTests
 FROM openjdk:11-jre-slim
 WORKDIR /app
 
-# Copy the compiled jar from build stage
-COPY --from=build /app/target/*.jar app.jar
+# Copy the compiled jar from build stage (Maven Shade gera o JAR com todas as dependências)
+COPY --from=build /app/target/ChatBotQuitutesGranja-1.0-SNAPSHOT.jar app.jar
 
 # Copy the PDF catalog
 COPY menu-quitutes.pdf .
