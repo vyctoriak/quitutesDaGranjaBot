@@ -25,12 +25,19 @@ public class Main extends TelegramLongPollingBot {
 
     private static final String BOT_TOKEN = dotenv.get("BOT_TOKEN");
     private static final String BOT_USERNAME = dotenv.get("BOT_USERNAME");
+    
+    private static Long GRUPO_ATENDIMENTO_ID = null;
+
+    private static final String SENHA_ATENDENTE = dotenv.get("SENHA_ATENDENTE");
+    private static final java.util.Set<Long> idsAtendentes = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static final long TIMEOUT_INATIVIDADE = 5 * 60 * 1000;
 
     private final Map<Long, String> estadoUsuario = new HashMap<>();
     private final Map<Long, DadosPedido> pedidosUsuario = new HashMap<>();
     private final Map<Long, Timer> timersInatividade = new ConcurrentHashMap<>();
+    private final Map<Long, Long> clientesEmAtendimento = new ConcurrentHashMap<>();
+    private final Map<Long, String> nomesClientes = new ConcurrentHashMap<>();
 
     @Override
     public String getBotUsername() {
@@ -47,12 +54,67 @@ public class Main extends TelegramLongPollingBot {
         if (update.hasMessage() && update.getMessage().hasText()) {
             Long chatId = update.getMessage().getChatId();
             String texto = update.getMessage().getText();
+            
+            String nomeUsuario = "";
+            if (update.getMessage().getFrom().getFirstName() != null) {
+                nomeUsuario = update.getMessage().getFrom().getFirstName();
+                if (update.getMessage().getFrom().getLastName() != null) {
+                    nomeUsuario += " " + update.getMessage().getFrom().getLastName();
+                }
+            }
+            
+            if (nomeUsuario != null && !nomeUsuario.isEmpty()) {
+                nomesClientes.put(chatId, nomeUsuario);
+            }
 
             cancelarTimerInatividade(chatId);
+
+            if (texto.equals("/id_grupo")) {
+                enviarMensagem(chatId, "🆔 ID deste chat/grupo: `" + chatId + "`\n\n" +
+                        "Para configurar como grupo de atendimento, use:\n" +
+                        "`/configurar_grupo " + chatId + " SENHA`");
+                return;
+            }
+            
+            if (texto.startsWith("/configurar_grupo")) {
+                configurarGrupoAtendimento(chatId, texto);
+                return;
+            }
+
+            if (texto.equals("/meu_id")) {
+                enviarMensagem(chatId, "🆔 Seu ID do Telegram é: `" + chatId + "`");
+                return;
+            }
+
+            if (texto.startsWith("/cadastrar_atendente")) {
+                cadastrarAtendente(chatId, texto);
+                return;
+            }
+
+            if (texto.equals("/listar_atendentes") && isAtendente(chatId)) {
+                listarAtendentes(chatId);
+                return;
+            }
 
             if (texto.equals("/start")) {
                 enviarMenuPrincipal(chatId);
                 estadoUsuario.put(chatId, "MENU");
+                return;
+            }
+
+            if (texto.equalsIgnoreCase("/finalizar")) {
+                finalizarAtendimentoHumano(chatId);
+                return;
+            }
+
+            if (GRUPO_ATENDIMENTO_ID != null && chatId.equals(GRUPO_ATENDIMENTO_ID) && 
+                texto.startsWith("/responder ")) {
+                responderClienteDoGrupo(chatId, texto, nomeUsuario);
+                return;
+            }
+
+            if (clientesEmAtendimento.containsKey(chatId)) {
+                encaminharMensagemParaGrupo(chatId, texto, nomeUsuario);
                 return;
             }
 
@@ -93,7 +155,8 @@ public class Main extends TelegramLongPollingBot {
                 "1. Ver catálogo\n" +
                 "2. Ofertas do dia\n" +
                 "3. Fazer pedido\n" +
-                "4. Informações da loja\n\n" +
+                "4. Informações da loja\n" +
+                "5. Falar com atendente\n\n" +
                 "Digite a opção desejada:\n\n";
         enviarMensagem(chatId, menu);
     }
@@ -115,9 +178,197 @@ public class Main extends TelegramLongPollingBot {
                 enviarInformacoes(chatId);
                 perguntarContinuar(chatId);
                 break;
+            case "5":
+                falarComAtendente(chatId);
+                break;
             default:
-                enviarMensagem(chatId, "❌ Opção inválida. Digite 1, 2, 3 ou 4:");
+                enviarMensagem(chatId, "❌ Opção inválida. Digite 1, 2, 3, 4 ou 5:");
         }
+    }
+
+    private void configurarGrupoAtendimento(Long chatId, String comando) {
+        // Formato: /configurar_grupo -123456789 SENHA
+        String[] partes = comando.split(" ", 3);
+        
+        if (partes.length < 3) {
+            enviarMensagem(chatId, "❌ Formato incorreto!\n\n" +
+                    "Use: /configurar_grupo ID_DO_GRUPO SENHA\n\n" +
+                    "Para descobrir o ID do grupo:\n" +
+                    "1. Adicione o bot ao grupo\n" +
+                    "2. No grupo, envie /id_grupo");
+            return;
+        }
+        
+        try {
+            Long grupoId = Long.parseLong(partes[1]);
+            String senhaInformada = partes[2];
+            
+            if (senhaInformada.equals(SENHA_ATENDENTE)) {
+                GRUPO_ATENDIMENTO_ID = grupoId;
+                enviarMensagem(chatId, "✅ *Grupo de atendimento configurado!*\n\n" +
+                        "🆔 ID do grupo: `" + grupoId + "`\n\n" +
+                        "Agora todas as mensagens dos clientes serão enviadas para este grupo!");
+                
+                // Envia confirmação também no grupo
+                enviarMensagem(grupoId, "✅ *Este grupo foi configurado como grupo de atendimento!*\n\n" +
+                        "📋 Para responder um cliente, use:\n" +
+                        "`/responder ID_CLIENTE mensagem`");
+                
+                System.out.println("✅ Grupo de atendimento configurado: " + grupoId);
+            } else {
+                enviarMensagem(chatId, "❌ Senha incorreta! Tente novamente.");
+            }
+        } catch (NumberFormatException e) {
+            enviarMensagem(chatId, "❌ ID do grupo inválido! Deve ser um número.");
+        }
+    }
+
+    private void cadastrarAtendente(Long chatId, String comando) {
+        // Formato: /cadastrar_atendente SENHA
+        String[] partes = comando.split(" ", 2);
+        
+        if (partes.length < 2) {
+            enviarMensagem(chatId, "❌ Formato incorreto!\n\nUse: /cadastrar_atendente SENHA");
+            return;
+        }
+        
+        String senhaInformada = partes[1];
+        
+        if (senhaInformada.equals(SENHA_ATENDENTE)) {
+            idsAtendentes.add(chatId);
+            enviarMensagem(chatId, "✅ *Atendente cadastrado com sucesso!*\n\n" +
+                    "🆔 Seu ID: `" + chatId + "`\n\n" +
+                    "📋 *Comandos disponíveis:*\n" +
+                    "• `/listar_atendentes` - Ver todos os atendentes\n\n" +
+                    "Você receberá notificações quando houver atendimentos!");
+            
+            System.out.println("✅ Novo atendente cadastrado: " + chatId);
+        } else {
+            enviarMensagem(chatId, "❌ Senha incorreta! Tente novamente.");
+            System.out.println("⚠️ Tentativa de cadastro com senha incorreta: " + chatId);
+        }
+    }
+
+    private void listarAtendentes(Long chatId) {
+        if (idsAtendentes.isEmpty()) {
+            enviarMensagem(chatId, "ℹ️ Nenhum atendente cadastrado ainda.");
+            return;
+        }
+        
+        StringBuilder lista = new StringBuilder();
+        lista.append("👥 *ATENDENTES CADASTRADOS*\n\n");
+        
+        int contador = 1;
+        for (Long id : idsAtendentes) {
+            lista.append(contador++).append(". ID: `").append(id).append("`\n");
+        }
+        
+        lista.append("\n_Total: ").append(idsAtendentes.size()).append(" atendente(s)_");
+        
+        enviarMensagem(chatId, lista.toString());
+    }
+
+    private void falarComAtendente(Long chatId) {
+        if (GRUPO_ATENDIMENTO_ID == null) {
+            enviarMensagem(chatId, "⚠️ *Desculpe, o atendimento humano não está disponível no momento.*\n\n" +
+                    "O grupo de atendimento ainda não foi configurado. Por favor, utilize as outras opções do menu.");
+            perguntarContinuar(chatId);
+            return;
+        }
+        
+        enviarMensagem(chatId, "👤 *Conectando você com um atendente...*\n\n" +
+                "Por favor, aguarde. Um atendente irá respondê-lo em breve.\n\n" +
+                "Para encerrar o atendimento, digite: /finalizar");
+        
+        // Marca o cliente como em atendimento humano
+        estadoUsuario.put(chatId, "ATENDIMENTO_HUMANO");
+        clientesEmAtendimento.put(chatId, GRUPO_ATENDIMENTO_ID);
+        
+        // Notifica o grupo de atendimento
+        notificarGrupoAtendimento(chatId);
+    }
+
+    private void notificarGrupoAtendimento(Long clienteChatId) {
+        String nomeCliente = nomesClientes.getOrDefault(clienteChatId, "Cliente");
+        
+        String mensagemGrupo = "🔔 *NOVO ATENDIMENTO SOLICITADO*\n\n" +
+                "👤 Cliente: *" + nomeCliente + "*\n" +
+                "🆔 ID: `" + clienteChatId + "`\n" +
+                "⏰ Horário: " + java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")) + "\n\n" +
+                "💬 Aguardando mensagem do cliente...\n\n" +
+                "📋 Para responder:\n" +
+                "`/responder " + clienteChatId + " sua mensagem aqui`";
+        
+        enviarMensagem(GRUPO_ATENDIMENTO_ID, mensagemGrupo);
+        System.out.println("📢 Notificação enviada ao grupo sobre cliente " + clienteChatId);
+    }
+
+    private void encaminharMensagemParaGrupo(Long clienteChatId, String mensagem, String nomeCliente) {
+        // Salva o nome do cliente
+        if (nomeCliente != null && !nomeCliente.isEmpty()) {
+            nomesClientes.put(clienteChatId, nomeCliente);
+        }
+        
+        String nomeExibir = nomesClientes.getOrDefault(clienteChatId, "Cliente");
+        
+        String mensagemFormatada = "💬 *" + nomeExibir + "* (ID: `" + clienteChatId + "`):\n\n" +
+                "\"" + mensagem + "\"\n\n" +
+                "_Para responder: /responder " + clienteChatId + " sua resposta_";
+        
+        enviarMensagem(GRUPO_ATENDIMENTO_ID, mensagemFormatada);
+    }
+
+    private void responderClienteDoGrupo(Long grupoChatId, String comando, String nomeAtendente) {
+        String[] partes = comando.split(" ", 3);
+        
+        if (partes.length < 3) {
+            enviarMensagem(grupoChatId, "❌ Formato incorreto!\n\nUse: /responder ID_CLIENTE mensagem");
+            return;
+        }
+        
+        try {
+            Long clienteChatId = Long.parseLong(partes[1]);
+            String resposta = partes[2];
+            
+            if (!clientesEmAtendimento.containsKey(clienteChatId)) {
+                enviarMensagem(grupoChatId, "⚠️ Este cliente não está em atendimento no momento.");
+                return;
+            }
+            
+            String nomeExibir = (nomeAtendente != null && !nomeAtendente.isEmpty()) ? nomeAtendente : "Atendente";
+            
+            enviarMensagem(clienteChatId, "👤 *" + nomeExibir + ":* " + resposta);
+            
+            String nomeCliente = nomesClientes.getOrDefault(clienteChatId, "Cliente");
+            enviarMensagem(grupoChatId, "✅ Mensagem enviada para *" + nomeCliente + "* (ID: " + clienteChatId + ")");
+            
+        } catch (NumberFormatException e) {
+            enviarMensagem(grupoChatId, "❌ ID do cliente inválido!");
+        }
+    }
+
+    private void finalizarAtendimentoHumano(Long chatId) {
+        if (clientesEmAtendimento.containsKey(chatId)) {
+            String nomeCliente = nomesClientes.getOrDefault(chatId, "Cliente");
+            
+            clientesEmAtendimento.remove(chatId);
+            nomesClientes.remove(chatId);
+            
+            enviarMensagem(chatId, "✅ *Atendimento finalizado!*\n\nObrigado por entrar em contato.");
+            
+            if (GRUPO_ATENDIMENTO_ID != null) {
+                enviarMensagem(GRUPO_ATENDIMENTO_ID, "ℹ️ *" + nomeCliente + "* (ID: `" + chatId + "`) finalizou o atendimento.");
+            }
+            
+            perguntarContinuar(chatId);
+            
+        } else {
+            enviarMensagem(chatId, "ℹ️ Você não está em atendimento no momento.");
+        }
+    }
+
+    private boolean isAtendente(Long chatId) {
+        return idsAtendentes.contains(chatId);
     }
 
     private void enviarCatalogo(Long chatId) {
@@ -354,7 +605,6 @@ public class Main extends TelegramLongPollingBot {
         }
     }
 
-    // Metodos para gerenciar timeout de inatividade
     private void iniciarTimerInatividade(Long chatId) {
         cancelarTimerInatividade(chatId);
 
