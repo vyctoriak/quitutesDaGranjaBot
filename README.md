@@ -222,12 +222,3 @@ Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalh
 Desenvolvido com ❤️ para a Quitutes da Granja
 
 ---
-
-**Nota**: O bot está atualmente em produção no Fly.io. Para melhorias futuras, considere adicionar:
-- Banco de dados para persistência de pedidos
-- Sistema de autenticação e autorização para administradores
-- Painel administrativo para gerenciar pedidos
-- Testes automatizados
-- Webhook ao invés de long polling para melhor performance
-- Integração com sistema de pagamento
-
